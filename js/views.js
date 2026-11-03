@@ -76,7 +76,13 @@
         ${units}
       </div>`;
     }).join('');
-    el.innerHTML = `<div class="learn">${parts}
+    const banner = AT.cloud.enabled && !AT.cloud.signedIn() && AT.hasProgress()
+      ? `<div class="save-banner">
+          <span class="sb-ico" aria-hidden="true">☁️</span>
+          <div class="sb-text"><b>Save your progress</b><span>Create a free account to continue on any device.</span></div>
+          <button class="btn btn-green btn-sm" data-account="up">Sign up</button>
+        </div>` : '';
+    el.innerHTML = `<div class="learn">${banner}${parts}
       <div class="course-end">${AT.mascot('happy', 90)}<p>More units are on the way. Keep practicing!</p></div>
     </div>`;
 
@@ -85,6 +91,7 @@
       openPop(b, AT.lessonById(b.dataset.lesson));
     }));
     el.querySelectorAll('[data-guide]').forEach((b) => b.addEventListener('click', () => openGuide(b.dataset.guide)));
+    AT.account.bind(el);
     requestAnimationFrame(() => {
       const target = el.querySelector('.node.current') || el.querySelector('.node.open');
       if (target && AT._scrollToCurrent !== false) target.scrollIntoView({ block: 'center', behavior: AT._smooth ? 'smooth' : 'auto' });
@@ -415,6 +422,7 @@
   ];
 
   AT.startPractice = (type) => {
+    if (type === 'set') return AT.openLetterPicker();
     const p = PRACTICES.find((x) => x.id === type);
     AT.runLesson({ title: p.title, build: () => AT.buildPractice(type), practice: true, onExit: () => AT.rerender() });
   };
@@ -422,6 +430,7 @@
   V.practice = (el) => {
     el.innerHTML = `<div class="page">
       <div class="page-head"><h1>Practice</h1><p>Short sessions to keep what you’ve learned fresh. Each one earns XP.</p></div>
+      ${setCardHTML()}
       <div class="practice-grid">
         ${PRACTICES.map((p) => {
           const ok = p.need();
@@ -435,6 +444,94 @@
       ${AT.coreLetterCount() < 3 ? `<div class="card empty">${AT.mascot('happy', 80)}<p>Finish your first lesson to unlock practice!</p><a class="btn btn-green" href="#/learn">Go to lessons</a></div>` : ''}
     </div>`;
     el.querySelectorAll('[data-practice]').forEach((b) => b.addEventListener('click', () => AT.startPractice(b.dataset.practice)));
+    $('[data-set-pick]', el).addEventListener('click', () => AT.openLetterPicker());
+    $('[data-set-go]', el)?.addEventListener('click', () => AT.startLetterSet(savedSet()));
+  };
+
+  /* ---------------- Pick 4 letters ---------------- */
+  const savedSet = () => (AT.state.practiceLetters || []).filter((id) => AT.letter(id) && !AT.letter(id).special).slice(0, 4);
+
+  function setCardHTML() {
+    const ids = savedSet();
+    const ready = ids.length === 4;
+    return `<div class="pcard set-feature">
+      <div class="pc-icon set-ico" aria-hidden="true">4</div>
+      <div class="pc-body">
+        <h3>Pick 4 letters</h3>
+        <p>Choose any 4 letters and practice them inside real words: find them, fill them in, read and spell.</p>
+        ${ready ? `<div class="set-preview arm" aria-label="Your letters">${ids.map((id) => `<span>${esc(AT.letter(id).up)}${esc(AT.letter(id).lo)}</span>`).join('')}</div>` : ''}
+      </div>
+      <div class="pc-btns">
+        ${ready ? '<button class="btn btn-blue btn-sm" data-set-go>Practice these</button>' : ''}
+        <button class="btn ${ready ? 'btn-ghost' : 'btn-blue'} btn-sm" data-set-pick>${ready ? 'Change letters' : 'Choose letters'}</button>
+      </div>
+    </div>`;
+  }
+
+  AT.openLetterPicker = () => {
+    const learned = AT.learnedLetters();
+    let chosen = savedSet();
+    const c = AT.modal.open(`<div class="picker">
+      <h2>Pick 4 letters</h2>
+      <p class="muted">You’ll practice them inside real words. Green letters are ones you’ve learned.</p>
+      <div class="pick-slots" aria-live="polite"></div>
+      <div class="pick-grid">${AT.LETTERS.map((Lt) => `<button class="pk ${learned.has(Lt.id) ? 'learned' : ''}" data-id="${Lt.id}" aria-pressed="false" aria-label="${esc(Lt.up)} ${esc(Lt.lo)}, sounds like ${esc(Lt.snd)}">
+          <span class="arm">${esc(Lt.up)}${esc(Lt.lo)}</span><small>${esc(Lt.snd.replace(/ \(.*\)$/, ''))}</small><b class="pk-n"></b>
+        </button>`).join('')}</div>
+      <p class="pick-info" aria-live="polite"></p>
+      <div class="pick-actions">
+        <button class="btn btn-ghost" data-random>🎲 Surprise me</button>
+        <button class="btn btn-green" data-go disabled>Practice</button>
+      </div>
+    </div>`, { className: 'wide' });
+    const btns = [...c.querySelectorAll('.pk')];
+    const draw = () => {
+      btns.forEach((b) => {
+        const i = chosen.indexOf(b.dataset.id);
+        b.classList.toggle('on', i >= 0);
+        b.setAttribute('aria-pressed', String(i >= 0));
+        $('.pk-n', b).textContent = i >= 0 ? i + 1 : '';
+      });
+      $('.pick-slots', c).innerHTML = [0, 1, 2, 3].map((i) => {
+        const Lt = AT.letter(chosen[i]);
+        return Lt ? `<button class="pslot on arm" data-remove="${Lt.id}" aria-label="Remove ${esc(Lt.up)}">${esc(Lt.up)}${esc(Lt.lo)}<span aria-hidden="true">×</span></button>`
+          : `<span class="pslot">${i + 1}</span>`;
+      }).join('');
+      c.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', () => { chosen = chosen.filter((x) => x !== b.dataset.remove); draw(); }));
+      const left = 4 - chosen.length;
+      $('.pick-info', c).textContent = left ? `Choose ${left} more letter${left === 1 ? '' : 's'}.` : `${AT.wordsWithLetters(chosen).length} words use these letters. Ready!`;
+      $('[data-go]', c).disabled = left !== 0;
+    };
+    btns.forEach((b) => b.addEventListener('click', () => {
+      const id = b.dataset.id;
+      if (chosen.includes(id)) chosen = chosen.filter((x) => x !== id);
+      else if (chosen.length >= 4) {
+        AT.toast('You can pick 4 letters. Tap a chosen one to remove it.');
+        b.classList.remove('nope'); void b.offsetWidth; b.classList.add('nope');
+        return;
+      } else {
+        chosen.push(id);
+        AT.say(AT.letterSoundText(AT.letter(id)));
+      }
+      draw();
+    }));
+    $('[data-random]', c).addEventListener('click', () => {
+      const pool = [...learned].filter((id) => !AT.letter(id).special);
+      chosen = AT.sample(pool.length >= 4 ? pool : AT.LETTERS.map((x) => x.id), 4);
+      draw();
+    });
+    $('[data-go]', c).addEventListener('click', () => { const ids = chosen.slice(); AT.modal.close(); AT.startLetterSet(ids); });
+    draw();
+  };
+
+  AT.startLetterSet = (ids) => {
+    AT.state.practiceLetters = ids.slice();
+    AT.touchSettings();
+    AT.save();
+    AT.runLesson({
+      title: 'Your letters: ' + ids.map((id) => AT.letter(id).up).join(' '),
+      build: () => AT.buildLetterSet(ids), practice: true, onExit: () => AT.rerender()
+    });
   };
 
   /* =====================================================================
@@ -453,6 +550,7 @@
         ${AT.mascot('happy', 84)}
         <div><h1>Your progress</h1><p class="muted">Learning Eastern Armenian (Yerevan)</p></div>
       </div>
+      ${AT.account.profileCard()}
       <div class="stat-grid">
         <div class="stat"><div class="st-ico">🔥</div><div><b>${AT.currentStreak()}</b><span>Day streak</span></div></div>
         <div class="stat"><div class="st-ico">⭐</div><div><b>${s.xp}</b><span>Total XP</span></div></div>
@@ -511,7 +609,7 @@
       <div class="card about">
         <h2>About</h2>
         <p>Armenian Tutor teaches <b>Eastern Armenian</b>, the Armenian of Yerevan, in modern spelling. You learn every letter, capital and lowercase, through the words of the Jesus Prayer, then build everyday vocabulary.</p>
-        <p class="muted small">Built-in audio is generated with the open-source eSpeak NG Eastern Armenian voice. If your device has a natural Armenian voice (for example in Microsoft Edge), “Auto” uses it instead. Your progress is saved on this device only.</p>
+        <p class="muted small">Built-in audio is generated with the open-source eSpeak NG Eastern Armenian voice. If your device has a natural Armenian voice (for example in Microsoft Edge), “Auto” uses it instead. ${AT.cloud.signedIn() ? 'Your progress is saved to your account.' : 'Without an account, progress is saved in this browser only.'}</p>
       </div>
     </div>`;
 
@@ -522,17 +620,21 @@
     el.querySelectorAll('[data-setting]').forEach((seg) => seg.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
       const k = seg.dataset.setting;
       set[k] = k === 'goal' ? Number(b.dataset.v) : b.dataset.v;
+      AT.touchSettings();
       AT.save();
       if (k === 'theme') AT.applyTheme();
       V.profile(el);
     })));
     el.querySelectorAll('[data-toggle]').forEach((inp) => inp.addEventListener('change', () => {
       set[inp.dataset.toggle] = inp.checked;
+      AT.touchSettings();
       AT.save();
     }));
+    AT.account.bind(el);
     $('#reset', el).addEventListener('click', async () => {
-      if (await AT.confirm('Reset all progress?', 'This erases your XP, streak and completed lessons on this device.', 'Reset', 'Cancel', true)) {
-        AT.resetProgress();
+      const where = AT.cloud.signedIn() ? 'in your account and on this device' : 'on this device';
+      if (await AT.confirm('Reset all progress?', `This erases your XP, streak and completed lessons ${where}.`, 'Reset', 'Cancel', true)) {
+        try { await AT.cloud.resetProgress(); } catch (e) { AT.toast('Reset here, but your account couldn’t be updated: ' + e.message, 5000); }
         AT.toast('Progress reset. Let’s begin again!');
         location.hash = '#/learn';
       }
@@ -551,7 +653,13 @@
     const pool = AT.WORDS.filter((w) => !w.phrase);
     const seed = AT.dayKey().split('-').reduce((a, b) => a * 31 + Number(b), 7);
     const wod = pool[seed % pool.length];
-    el.innerHTML = `
+    const acct = !AT.cloud.enabled ? ''
+      : AT.cloud.signedIn()
+        ? `<div class="side-card acct-mini"><span class="avatar" aria-hidden="true">${esc(AT.account.initial())}</span>
+            <div><b class="acct-email">${esc(AT.cloud.user().email)}</b><span class="small sync-line ${esc(AT.cloud.status)}" data-sync-line>${esc(AT.account.statusLine())}</span></div></div>`
+        : `<div class="side-card cta"><h3>Save your progress</h3><p class="small">Create a free account to keep learning on any device.</p>
+            <div class="acct-btns"><button class="btn btn-green btn-sm" data-account="up">Create account</button><button class="btn btn-ghost btn-sm" data-account="in">Sign in</button></div></div>`;
+    el.innerHTML = `${acct}
       <div class="side-card">
         <div class="sc-row"><span class="sc-big">🔥 ${AT.currentStreak()}</span><span class="muted">day streak</span></div>
       </div>
@@ -572,6 +680,7 @@
         <div class="wod-rom">${esc(wod.rom)}</div>
         <div class="wod-en">${esc(wod.en)}</div>
       </div>`;
+    AT.account.bind(el);
   };
 
   /* =====================================================================
@@ -586,6 +695,7 @@
           <h1><span class="arm">Բարև</span>! <small>(Barev = Hello!)</small></h1>
           <p>Let’s learn to read and speak <b>Eastern Armenian</b>, the Armenian of Yerevan, one letter at a time.</p>
           <button class="btn btn-green btn-wide" data-next>Get started</button>
+          ${AT.cloud.enabled ? '<button class="btn btn-ghost btn-wide" data-have-account>I already have an account</button>' : ''}
         </div>
         <div class="ob-step" data-step="2" hidden>
           <h2>Here’s how it works</h2>
@@ -606,10 +716,12 @@
     function finish() {
       if (finished) return;
       finished = true;
+      if (AT.state.settings.goal !== goal) AT.touchSettings();
       AT.state.settings.goal = goal;
       AT.state.onboarded = true;
       AT.save();
     }
+    $('[data-have-account]', c)?.addEventListener('click', () => { finish(); AT.account.openAuth('in'); });
     $('[data-next]', c).addEventListener('click', () => { $('[data-step="1"]', c).hidden = true; $('[data-step="2"]', c).hidden = false; });
     c.querySelectorAll('[data-goal]').forEach((b) => b.addEventListener('click', () => {
       goal = Number(b.dataset.goal);

@@ -196,7 +196,7 @@
       case 'glyph':
         return `<div class="stim-glyph arm">${esc(stim.text)}</div>`;
       case 'arm': {
-        const text = esc(stim.text).replace('____', '<span class="blank-slot">?</span>');
+        const text = esc(stim.text).replace('____', `<span class="blank-slot${stim.blankLetter ? ' letter' : ''}">?</span>`);
         return `<div class="stim-arm">${stim.audio ? AT.speakBtn(stim.audio, 'Listen', 'speak-lg') : ''}
           <div class="stim-arm-body"><div class="arm stim-arm-text">${text}</div>
           ${stim.rom && rom() ? `<div class="stim-rom">${esc(stim.rom)}</div>` : ''}
@@ -441,6 +441,56 @@
     };
     items.forEach((b) => b.addEventListener('click', () => pickItem(b)));
     return { matchMode: true, key(n) { items[n - 1] && !items[n - 1].disabled && items[n - 1].click(); } };
+  };
+
+  R.introSet = (ex, el) => {
+    el.innerHTML = `<div class="ex ex-intro">
+      <div class="ex-badge">Your 4 letters</div>
+      <h2 class="prompt">Let’s find these letters in real words</h2>
+      <div class="set-cards">${ex.ids.map((id) => {
+        const Lt = AT.letter(id);
+        const st = AT.letterSoundText(Lt);
+        return `<button class="set-card" data-say="${esc(st)}" aria-label="${esc(Lt.up)} ${esc(Lt.lo)}: ${esc(Lt.snd)}">
+          <span class="arm sc-g">${esc(Lt.up)} ${esc(Lt.lo)}</span>
+          <span class="osound">${AT.soundHTML(Lt)}</span>
+          <span class="sc-play">${SPEAKER}</span>
+        </button>`;
+      }).join('')}</div>
+      <p class="hint">Tap a letter to hear it</p>
+    </div>`;
+    return { needsCheck: false };
+  };
+
+  // Tap a letter inside a word.
+  R.pick = (ex, el, api) => {
+    const chars = [...ex.word];
+    el.innerHTML = `<div class="ex ex-pick">
+      <h2 class="prompt">${esc(ex.prompt)}</h2>
+      ${ex.sub ? `<p class="prompt-sub">${ex.sub}</p>` : ''}
+      <div class="pick-word" role="radiogroup" aria-label="Letters of the word">
+        ${chars.map((c, i) => `<button class="ptile arm" role="radio" aria-checked="false" data-i="${i}">${esc(c)}</button>`).join('')}
+      </div>
+      <div class="pick-meta">${AT.speakBtn(ex.word, 'Hear the word')}
+        <div><div class="stim-en-big">“${esc(ex.en)}”</div>${rom() ? `<div class="stim-rom">${esc(ex.rom)}</div>` : ''}</div>
+      </div>
+    </div>`;
+    let sel = -1;
+    const tiles = [...el.querySelectorAll('.ptile')];
+    const choose = (i) => {
+      sel = i;
+      tiles.forEach((t, k) => { t.classList.toggle('selected', k === i); t.setAttribute('aria-checked', String(k === i)); });
+      api.ready(true);
+    };
+    tiles.forEach((t, i) => t.addEventListener('click', () => choose(i)));
+    return {
+      check() {
+        const ok = ex.answers.includes(sel);
+        tiles[sel].classList.add(ok ? 'right' : 'wrong');
+        if (!ok) ex.answers.forEach((i) => tiles[i].classList.add('right'));
+        return { ok };
+      },
+      key(n) { if (n >= 1 && n <= tiles.length) choose(n - 1); }
+    };
   };
 
   AT.renderers = R;

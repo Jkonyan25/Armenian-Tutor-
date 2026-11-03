@@ -20,9 +20,10 @@ Then you move on to the rest of the alphabet and intermediate vocabulary.
 - **Many exercise types.** Letter → sound, sound → letter, listening, capital ↔ lowercase, matching pairs, spelling words from letter tiles, putting prayer words in order, and fill in the blank.
 - **Alphabet page** with a writing pad for tracing each letter.
 - **Prayer page** with word-by-word breakdown and a read-along mode that highlights each word as it is spoken.
+- **Pick 4 letters:** choose any 4 letters and practice them inside real words. You fill in the missing letter, tap the letter in a word, read, listen and spell. Use “Surprise me” for a random set. The app remembers your last set.
 - **Practice hub:** letter review, big & small letters, listening, tricky pairs, word review, and fixing your mistakes.
+- **Accounts:** sign in with email and password to keep your lessons, XP, streak and settings on every device. Practicing on two devices merges the progress, so nothing is lost. Any progress made before signing in is added to your account. Accounts need a one-time setup (see [Turning on accounts](#turning-on-accounts)). Without it, progress is saved in your browser only.
 - Works on phones and desktops, has a dark mode, and can be installed to your home screen and used offline.
-- Progress is saved in your browser (no account needed).
 
 ## Course outline
 
@@ -53,14 +54,39 @@ python3 -m http.server 8000
 
 Opening `index.html` directly from disk also works. The only thing missing that way is offline mode.
 
+## Turning on accounts
+
+GitHub Pages only serves files and can't store accounts, so the app uses **[Supabase](https://supabase.com)**, which has a free tier. It's a one-time setup of about 5 minutes:
+
+1. **Create a project.** Sign up at [supabase.com](https://supabase.com) and click **New project**. Pick any name and a database password (you won't need the password again), then wait about a minute for it to start.
+2. **Create the progress table.** In the project open **SQL Editor**, paste in the contents of [`supabase/schema.sql`](supabase/schema.sql), and click **Run**. This creates one row per learner and rules that only let each person read and change their own progress.
+3. **Point email links at your site.** Open **Authentication → URL Configuration**. Set **Site URL** to your site's address, e.g. `https://jkonyan25.github.io/Armenian-Tutor-/`. Add the same address under **Redirect URLs**. Sign-up confirmation and password-reset emails will then link back to the app.
+4. **Connect the app.** Open **Project Settings → API Keys** (or **Settings → API** in older dashboards). Copy the **Project URL** and the **publishable** key (`sb_publishable_…`, or the legacy **anon public** key) into [`js/config.js`](js/config.js):
+   ```js
+   window.ARM_CONFIG = {
+     supabaseUrl: 'https://abcdefghijklmnop.supabase.co',
+     supabaseKey: 'sb_publishable_...'
+   };
+   ```
+   Commit and push. Within about a minute a **Sign in** button appears in the top bar.
+
+Notes:
+- These two values are meant to be public. Never put the **secret** / **service_role** key in the app.
+- By default Supabase asks new users to confirm their email. To let people start right away, turn off **Confirm email** under **Authentication → Sign In / Providers → Email**.
+- Supabase's built-in email service only sends a few emails per hour. That's fine for personal use; for more, add your own email provider under **Authentication → Emails (SMTP)**.
+- Free projects pause after about a week without use. Reopen the project in the Supabase dashboard to resume it.
+
 ## Project structure
 
 ```
 index.html              App shell
 css/styles.css          All styling (light + dark)
 js/data.js              ALL course content: letters, words, the prayer, lessons
+js/config.js            Supabase project URL + public key (accounts)
 js/audio-manifest.js    Generated map of Armenian text → audio file
-js/core.js              Helpers, saved progress, XP and streaks
+js/core.js              Helpers, saved progress, XP, streaks, merging progress
+js/cloud.js             Sign-in and syncing progress with Supabase
+js/account.js           Sign-in, sign-up and account screens
 js/audio.js             Speech playback + sound effects
 js/exercises.js         Exercise generators and lesson recipes
 js/lesson.js            The lesson player and shared UI pieces
@@ -68,6 +94,7 @@ js/views.js             Learn, Alphabet, Prayer, Practice and Profile screens
 js/app.js               Routing and start-up
 audio/                  Eastern Armenian clips (MP3)
 tools/                  Scripts that generate audio and check the course
+supabase/schema.sql     Database setup for accounts
 sw.js, manifest.webmanifest, icons/   Offline + install support
 ```
 

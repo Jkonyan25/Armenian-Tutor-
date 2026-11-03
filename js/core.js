@@ -164,7 +164,12 @@
   const KEY = 'armenianTutor.v1';
   const DEFAULT_SETTINGS = { goal: 20, sfx: true, autoplay: true, voice: 'auto', rom: true, hearts: true, unlockAll: false, theme: 'auto' };
   function fresh() {
-    return { v: 1, xp: 0, xpByDay: {}, streak: 0, bestStreak: 0, lastDay: null, done: {}, items: {}, settings: { ...DEFAULT_SETTINGS }, onboarded: false, created: Date.now() };
+    return {
+      v: 1, xp: 0, xpByDay: {}, streak: 0, bestStreak: 0, lastDay: null, done: {}, items: {},
+      settings: { ...DEFAULT_SETTINGS }, settingsAt: 0, practiceLetters: null,
+      onboarded: false, created: Date.now(),
+      owner: null // account id this progress belongs to (null = not signed in)
+    };
   }
   function load() {
     try {
@@ -182,13 +187,73 @@
     try { localStorage.setItem(KEY, JSON.stringify(AT.state)); } catch (e) { /* private mode: progress lasts this session */ }
     AT.emit('state');
   };
-  AT.resetProgress = () => {
-    const settings = AT.state.settings;
-    AT.state = fresh();
-    AT.state.settings = settings;
-    AT.state.onboarded = true;
+  AT.freshState = fresh;
+  // Swap in new progress while keeping the same objects other code holds on to.
+  AT.replaceState = (next) => {
+    const s = AT.state;
+    const settings = s.settings;
+    Object.keys(s).forEach((k) => delete s[k]);
+    Object.assign(s, next);
+    s.settings = Object.assign(settings, next.settings || {});
     AT.save();
   };
+  AT.resetProgress = () => {
+    const next = fresh();
+    next.settings = { ...AT.state.settings };
+    next.settingsAt = AT.state.settingsAt || 0;
+    next.onboarded = true;
+    AT.replaceState(next);
+  };
+  // Call after changing a setting so the newest choice wins when devices sync.
+  AT.touchSettings = () => { AT.state.settingsAt = Date.now(); };
+
+  /* ---------------- Merging progress from two devices ----------------
+     Used by account sync. Nothing learned on either side is lost:
+     lessons, mistakes and XP per day are combined. additive = true when
+     adding guest progress (made before signing in) to an account. */
+  const DEVICE_ONLY_SETTINGS = ['voice'];
+  AT.mergeState = (local, remote, { additive = false } = {}) => {
+    if (!remote) return { ...local };
+    const base = fresh();
+    const out = { ...base, ...remote, ...local };
+    const max = (a, b) => Math.max(a || 0, b || 0);
+    const keysOf = (a, b) => AT.uniq([...Object.keys(a || {}), ...Object.keys(b || {})]);
+
+    out.done = {};
+    for (const k of keysOf(local.done, remote.done)) {
+      const a = (local.done || {})[k] || {}, b = (remote.done || {})[k] || {};
+      out.done[k] = { times: additive ? (a.times || 0) + (b.times || 0) : max(a.times, b.times), best: max(a.best, b.best), at: max(a.at, b.at) };
+    }
+    out.items = {};
+    for (const k of keysOf(local.items, remote.items)) {
+      const a = (local.items || {})[k] || {}, b = (remote.items || {})[k] || {};
+      out.items[k] = additive ? { c: (a.c || 0) + (b.c || 0), w: (a.w || 0) + (b.w || 0), t: max(a.t, b.t) } : { c: max(a.c, b.c), w: max(a.w, b.w), t: max(a.t, b.t) };
+    }
+    out.xpByDay = {};
+    for (const k of keysOf(local.xpByDay, remote.xpByDay)) {
+      const a = (local.xpByDay || {})[k], b = (remote.xpByDay || {})[k];
+      out.xpByDay[k] = additive ? (a || 0) + (b || 0) : max(a, b);
+    }
+    out.xp = additive ? (local.xp || 0) + (remote.xp || 0) : max(local.xp, remote.xp);
+
+    // Streak: the side that practiced most recently knows the current streak.
+    const la = local.lastDay || '', ra = remote.lastDay || '';
+    if (la > ra) { out.lastDay = la; out.streak = local.streak; }
+    else if (ra > la) { out.lastDay = ra; out.streak = remote.streak; }
+    else { out.lastDay = la || null; out.streak = max(local.streak, remote.streak); }
+    out.bestStreak = Math.max(max(local.bestStreak, remote.bestStreak), out.streak || 0);
+    out.onboarded = !!(local.onboarded || remote.onboarded);
+    out.created = Math.min(local.created || Date.now(), remote.created || Date.now());
+
+    // Settings: the most recently changed side wins (voice stays per device).
+    const newer = (remote.settingsAt || 0) > (local.settingsAt || 0) ? remote : local;
+    out.settings = { ...base.settings, ...(local.settings || {}), ...(newer.settings || {}) };
+    DEVICE_ONLY_SETTINGS.forEach((k) => { if (local.settings && k in local.settings) out.settings[k] = local.settings[k]; });
+    out.settingsAt = max(local.settingsAt, remote.settingsAt);
+    out.practiceLetters = newer.practiceLetters || local.practiceLetters || remote.practiceLetters || null;
+    return out;
+  };
+  AT.hasProgress = (s = AT.state) => (s.xp || 0) > 0 || Object.keys(s.done || {}).length > 0;
 
   // Tiny event bus
   const listeners = {};

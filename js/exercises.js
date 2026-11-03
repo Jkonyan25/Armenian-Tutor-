@@ -420,8 +420,91 @@
     return seq.concat(shuffle(practice));
   }
 
+  /* ---------------- Letter-set practice: 4 letters inside real words ---------------- */
+  // Positions (by character) where a letter appears in a word. Ո inside ու doesn't count as Ո.
+  AT.letterPositions = (arm, id) => {
+    const Lt = L(id);
+    const chars = [...arm];
+    const out = [];
+    chars.forEach((c, i) => {
+      if (c.toLowerCase() !== Lt.lo) return;
+      if (id === 'vo' && chars[i + 1] && chars[i + 1].toLowerCase() === 'ւ') return;
+      out.push(i);
+    });
+    return out;
+  };
+  // Single words (no phrases), one entry per spelling.
+  const SINGLE_WORDS = (() => {
+    const seen = new Set();
+    return AT.WORDS.filter((w) => {
+      if (w.phrase || /\s/.test(w.arm.trim())) return false;
+      const k = w.arm.toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  })();
+  AT.wordsWithLetters = (ids) => SINGLE_WORDS.filter((w) => ids.some((id) => AT.letterPositions(w.arm, id).length));
+
+  G.introSet = (ids) => ({ type: 'introSet', ids });
+
+  G.missingLetter = (wordId, id, setIds) => {
+    const w = W(wordId);
+    const Lt = L(id);
+    const chars = [...w.arm];
+    const pos = pick(AT.letterPositions(w.arm, id));
+    const upper = chars[pos] !== chars[pos].toLowerCase();
+    const display = chars.slice(0, pos).join('') + '____' + chars.slice(pos + 1).join('');
+    return {
+      type: 'mcq', key: 'L:' + id, prompt: 'Which letter is missing?',
+      stim: { kind: 'arm', text: display, rom: w.rom, en: w.en, audio: w.arm, blankLetter: true },
+      options: uniq([id, ...setIds]).slice(0, 4).map((x) => ({ value: x, glyph: upper ? L(x).up : L(x).lo, kind: 'glyph' })),
+      answer: id, after: w.arm,
+      reveal: `<span class="arm">${esc(w.arm)}</span> · ${AT.pairHTML(Lt)} says “${esc(Lt.snd)}”`, tip: Lt.tip
+    };
+  };
+
+  // Vowel twins sound alike inside words, so ask for those by shape only.
+  const SOUND_TWINS = new Set(['yech', 'e', 'vo', 'o']);
+  G.pickLetter = (wordId, id) => {
+    const w = W(wordId);
+    const Lt = L(id);
+    const bySound = canSound(id) && !SOUND_TWINS.has(id) && Math.random() < 0.5;
+    return {
+      type: 'pick', key: 'L:' + id,
+      prompt: bySound ? `Tap the letter that sounds like “${Lt.snd}”` : `Tap the letter ${Lt.up} ${Lt.lo} in this word`,
+      sub: bySound ? `as in <b>${hl(Lt.eng)}</b>` : '',
+      word: w.arm, en: w.en, rom: w.rom, answers: AT.letterPositions(w.arm, id),
+      after: AT.letterSoundText(Lt),
+      reveal: `${AT.pairHTML(Lt)} in <span class="arm">${esc(w.arm)}</span>`, tip: Lt.tip
+    };
+  };
+
+  AT.buildLetterSet = (ids) => {
+    const known = new Set([...AT.learnedLetters(), ...ids]);
+    const readable = (w) => AT.tokenize(w.arm).every((t) => known.has(t.id) || (t.id === 'u' && known.has('vyun')));
+    // Words the learner can fully read come first.
+    const ordered = (ws) => [...shuffle(ws.filter(readable)), ...shuffle(ws.filter((w) => !readable(w)))];
+    const tasks = [];
+    for (const id of ids) {
+      const ws = ordered(AT.wordsWithLetters([id]));
+      if (!ws.length) continue;
+      tasks.push(G.missingLetter(ws[0].id, id, ids));
+      tasks.push(G.pickLetter((ws[1] || ws[0]).id, id));
+    }
+    const all = AT.wordsWithLetters(ids);
+    const pool = [all.map((w) => w.id)];
+    ordered(all).slice(0, 4).forEach((w) => {
+      const fns = [() => G.wordRead(w.id, pool), () => G.listenWord(w.id, pool), () => G.wordMeaning(w.id, pool)];
+      if (AT.tokenize(w.arm).length <= 8) fns.push(() => G.buildWord(w.id, ids));
+      tasks.push(pick(fns)());
+    });
+    tasks.push(ids.filter(canSound).length >= 3 && Math.random() < 0.5 ? G.matchSound(ids) : G.matchCase(ids));
+    return [G.introSet(ids), ...shuffle(tasks)];
+  };
+
   /* ---------------- Practice sessions (Practice tab) ---------------- */
-  AT.PAIRS = [['tyun', 'to'], ['pe', 'pyur'], ['ken', 'ke'], ['tsa', 'tso'], ['che', 'cha'], ['re', 'ra'], ['yech', 'e'], ['vo', 'o'], ['khe', 'ghat']];
+  AT.PAIRS =[['tyun', 'to'], ['pe', 'pyur'], ['ken', 'ke'], ['tsa', 'tso'], ['che', 'cha'], ['re', 'ra'], ['yech', 'e'], ['vo', 'o'], ['khe', 'ghat']];
 
   AT.buildPractice = (type) => {
     const learned = [...AT.learnedLetters()].filter((x) => !L(x).special);
